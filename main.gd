@@ -14,9 +14,10 @@ enum BlockType {
 	STONE = 3,
 	SAND = 4,
 	WATER = 5,
-	WOOD = 6,
-	LEAVES = 7,
-	COBBLESTONE = 8
+	FLOWING_WATER = 6,
+	WOOD = 7,
+	LEAVES = 8,
+	COBBLESTONE = 9
 }
 
 # Block colors
@@ -25,7 +26,8 @@ var block_colors := {
 	BlockType.DIRT: Color(0.55, 0.4, 0.25),
 	BlockType.STONE: Color(0.5, 0.5, 0.5),
 	BlockType.SAND: Color(0.9, 0.85, 0.6),
-	BlockType.WATER: Color(0.2, 0.4, 0.8, 0.7),
+	BlockType.WATER: Color(0.2, 0.4, 0.8, 0.8),
+	BlockType.FLOWING_WATER: Color(0.3, 0.5, 0.9, 0.6),
 	BlockType.WOOD: Color(0.4, 0.25, 0.1),
 	BlockType.LEAVES: Color(0.2, 0.5, 0.2),
 	BlockType.COBBLESTONE: Color(0.4, 0.4, 0.4)
@@ -61,6 +63,13 @@ var hotbar_slot_nodes: Array = []
 # Block preview
 var block_preview: MeshInstance3D
 var current_target_block := Vector3i(-1, -1, -1)
+
+# Water flow simulation
+var water_flow_timer := 0.0
+const WATER_FLOW_INTERVAL := 0.3
+const MAX_FLOW_DISTANCE := 7
+# Track water sources for flow distance calculation
+var water_sources := {}  # Vector3i -> flow_distance (0 for source)
 
 # UI elements
 var hotbar: HBoxContainer
@@ -325,6 +334,9 @@ func _physics_process(delta: float) -> void:
 	# Update block preview
 	update_block_preview()
 
+	# Process water flow
+	_process_water_flow(delta)
+
 func get_height_at(x: int, z: int) -> float:
 	var height = noise.get_noise_2d(x, z) * 20 + 20
 	return floor(height)
@@ -392,7 +404,7 @@ func create_chunk_mesh(chunk_node: Node3D, blocks: Dictionary, cx: int, cz: int)
 	for pos in blocks.keys():
 		var block_type = blocks[pos]
 
-		if block_type == BlockType.WATER:
+		if block_type == BlockType.WATER or block_type == BlockType.FLOWING_WATER:
 			continue  # Handle water separately
 
 		# Check if any face is exposed
@@ -407,7 +419,7 @@ func create_chunk_mesh(chunk_node: Node3D, blocks: Dictionary, cx: int, cz: int)
 
 		var has_exposed_face = false
 		for neighbor in neighbors:
-			if neighbor == null or neighbor == BlockType.AIR or neighbor == BlockType.WATER:
+			if neighbor == null or neighbor == BlockType.AIR or neighbor == BlockType.WATER or neighbor == BlockType.FLOWING_WATER:
 				has_exposed_face = true
 				break
 
@@ -456,11 +468,10 @@ func create_chunk_mesh(chunk_node: Node3D, blocks: Dictionary, cx: int, cz: int)
 	var water_normals: PackedVector3Array = PackedVector3Array()
 
 	for pos in blocks.keys():
-		if blocks[pos] == BlockType.WATER:
-			# Only show top water face
-			var above = blocks.get(pos + Vector3i(0, 1, 0))
-			if above == null or above == BlockType.AIR:
-				add_water_face(water_verts, water_colors, water_normals, pos)
+		var block_type = blocks[pos]
+		if block_type == BlockType.WATER or block_type == BlockType.FLOWING_WATER:
+			var water_color = block_colors.get(block_type, block_colors[BlockType.WATER])
+			add_water_face(water_verts, water_colors, water_normals, pos, water_color, blocks)
 
 	if water_verts.size() > 0:
 		var water_arrays = []
@@ -529,16 +540,68 @@ func add_block_to_mesh(verts: PackedVector3Array, cols: PackedColorArray, norms:
 	]
 	add_face(verts, cols, norms, right_verts, Vector3.RIGHT, color)
 
-func add_water_face(verts: PackedVector3Array, cols: PackedColorArray, norms: PackedVector3Array, pos: Vector3i) -> void:
+func add_water_face(verts: PackedVector3Array, cols: PackedColorArray, norms: PackedVector3Array, pos: Vector3i, color: Color, blocks: Dictionary) -> void:
 	var x = pos.x
 	var y = pos.y
 	var z = pos.z
 
-	var water_verts = [
-		Vector3(x, y + 1, z), Vector3(x + 1, y + 1, z),
-		Vector3(x + 1, y + 1, z + 1), Vector3(x, y + 1, z + 1)
-	]
-	add_face(verts, cols, norms, water_verts, Vector3.UP, block_colors[BlockType.WATER])
+	# Check adjacent blocks - only render face if adjacent block is not water
+	var above = blocks.get(pos + Vector3i(0, 1, 0))
+	var below = blocks.get(pos + Vector3i(0, -1, 0))
+	var front = blocks.get(pos + Vector3i(0, 0, 1))
+	var back = blocks.get(pos + Vector3i(0, 0, -1))
+	var left = blocks.get(pos + Vector3i(-1, 0, 0))
+	var right = blocks.get(pos + Vector3i(1, 0, 0))
+
+	var water_types = [BlockType.WATER, BlockType.FLOWING_WATER]
+
+	# Top face - always render (water surface)
+	if above == null or not above in water_types:
+		var top_verts = [
+			Vector3(x, y + 1, z), Vector3(x + 1, y + 1, z),
+			Vector3(x + 1, y + 1, z + 1), Vector3(x, y + 1, z + 1)
+		]
+		add_face(verts, cols, norms, top_verts, Vector3.UP, color)
+
+	# Bottom face
+	if below == null or not below in water_types:
+		var bottom_verts = [
+			Vector3(x, y, z + 1), Vector3(x + 1, y, z + 1),
+			Vector3(x + 1, y, z), Vector3(x, y, z)
+		]
+		add_face(verts, cols, norms, bottom_verts, Vector3.DOWN, color)
+
+	# Front face
+	if front == null or not front in water_types:
+		var front_verts = [
+			Vector3(x, y, z + 1), Vector3(x, y + 1, z + 1),
+			Vector3(x + 1, y + 1, z + 1), Vector3(x + 1, y, z + 1)
+		]
+		add_face(verts, cols, norms, front_verts, Vector3.BACK, color)
+
+	# Back face
+	if back == null or not back in water_types:
+		var back_verts = [
+			Vector3(x + 1, y, z), Vector3(x + 1, y + 1, z),
+			Vector3(x, y + 1, z), Vector3(x, y, z)
+		]
+		add_face(verts, cols, norms, back_verts, Vector3.FORWARD, color)
+
+	# Left face
+	if left == null or not left in water_types:
+		var left_verts = [
+			Vector3(x, y, z), Vector3(x, y + 1, z),
+			Vector3(x, y + 1, z + 1), Vector3(x, y, z + 1)
+		]
+		add_face(verts, cols, norms, left_verts, Vector3.LEFT, color)
+
+	# Right face
+	if right == null or not right in water_types:
+		var right_verts = [
+			Vector3(x + 1, y, z + 1), Vector3(x + 1, y + 1, z + 1),
+			Vector3(x + 1, y + 1, z), Vector3(x + 1, y, z)
+		]
+		add_face(verts, cols, norms, right_verts, Vector3.RIGHT, color)
 
 func add_face(verts: PackedVector3Array, cols: PackedColorArray, norms: PackedVector3Array, face_verts: Array, normal: Vector3, color: Color) -> void:
 	# Triangle 1
@@ -626,6 +689,9 @@ func place_block() -> void:
 			# Don't place if block already exists
 			if not chunks[key].has(block_key):
 				chunks[key][block_key] = selected_block
+				# Track water source
+				if selected_block == BlockType.WATER:
+					water_sources[block_key] = 0
 				regenerate_chunk(chunk_x, chunk_z)
 
 func regenerate_chunk(cx: int, cz: int) -> void:
@@ -640,3 +706,81 @@ func regenerate_chunk(cx: int, cz: int) -> void:
 		# Create new mesh
 		if chunks.has(key):
 			create_chunk_mesh(chunk_node, chunks[key], cx, cz)
+
+func _process_water_flow(delta: float) -> void:
+	water_flow_timer += delta
+	if water_flow_timer < WATER_FLOW_INTERVAL:
+		return
+
+	water_flow_timer = 0.0
+
+	# Track changes to apply after iteration
+	var blocks_to_add := []
+	var blocks_to_remove := []
+	var new_water_sources := {}
+
+	# Process each water source
+	for source_pos in water_sources.keys():
+		var flow_distance = water_sources[source_pos]
+
+		# Try to flow downward
+		var below_pos = source_pos + Vector3i(0, -1, 0)
+		if _can_flow_to(below_pos):
+			# Only flow down if we haven't reached max distance
+			if flow_distance < MAX_FLOW_DISTANCE:
+				blocks_to_add.append({"pos": below_pos, "is_source": false, "source": source_pos})
+				new_water_sources[below_pos] = flow_distance + 1
+
+		# Try to flow horizontally (only if can't flow down or at max distance)
+		if flow_distance >= MAX_FLOW_DISTANCE:
+			continue
+
+		var directions := [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]
+		for dir in directions:
+			var side_pos = source_pos + dir
+			var below_side = side_pos + Vector3i(0, -1, 0)
+
+			# First check if we can flow into the side position
+			if _can_flow_to(side_pos):
+				# Then check if we can flow down from the side position
+				if _can_flow_to(below_side):
+					# Only add if not already water and within distance limit
+					if flow_distance + 1 < MAX_FLOW_DISTANCE:
+						blocks_to_add.append({"pos": side_pos, "is_source": false, "source": source_pos})
+						new_water_sources[side_pos] = flow_distance + 1
+
+	# Apply changes
+	for block_data in blocks_to_add:
+		var pos = block_data["pos"]
+		var cx = int(floor(float(pos.x) / CHUNK_SIZE))
+		var cz = int(floor(float(pos.z) / CHUNK_SIZE))
+		var key = get_chunk_key(cx, cz)
+
+		if chunks.has(key) and not chunks[key].has(pos):
+			if block_data["is_source"]:
+				chunks[key][pos] = BlockType.WATER
+				water_sources[pos] = 0
+			else:
+				chunks[key][pos] = BlockType.FLOWING_WATER
+				# Track the original source's flow distance
+				var source_pos = block_data["source"]
+				if water_sources.has(source_pos):
+					new_water_sources[pos] = water_sources[source_pos] + 1
+			regenerate_chunk(cx, cz)
+
+	# Update water_sources with new flowing water positions
+	for pos in new_water_sources.keys():
+		if not water_sources.has(pos):
+			water_sources[pos] = new_water_sources[pos]
+
+func _can_flow_to(pos: Vector3i) -> bool:
+	var cx = int(floor(float(pos.x) / CHUNK_SIZE))
+	var cz = int(floor(float(pos.z) / CHUNK_SIZE))
+	var key = get_chunk_key(cx, cz)
+
+	if not chunks.has(key):
+		return false
+
+	var current_block = chunks[key].get(pos, BlockType.AIR)
+	# Can flow into air or existing water/flowing_water
+	return current_block == BlockType.AIR or current_block == BlockType.WATER or current_block == BlockType.FLOWING_WATER
