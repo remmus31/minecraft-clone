@@ -1,0 +1,52 @@
+[gd_scene load_steps=3 format=3 uid="uid://main_scene"]
+
+[ext_resource type="Script" path="res://main.gd" id="1_main"]
+[ext_resource type="Environment" path="res://environment.tres" id="2_env"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = ExtResource("2_env")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.70710677, -0.5, 0.5, 0, 0.70710677, 0.70710677, -0.70710677, -0.5, 0.5, 0, 10, 0)
+shadow_enabled = true
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Crosshair" type="ColorRect" parent="CanvasLayer"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -10.0
+offset_top = -10.0
+offset_right = 10.0
+offset_bottom = 10.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(1, 1, 1, 0.5)
+
+[node name="Hotbar" type="HBoxContainer" parent="CanvasLayer"]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -180.0
+offset_top = -90.0
+offset_right = 180.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="World" type="Node3D" parent="."]
+
+[node name="Player" type="CharacterBody3D" parent="World"]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="World/Player"]
+
+[node name="Camera3D" type="Camera3D" parent="World/Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)

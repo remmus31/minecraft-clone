@@ -1,0 +1,17 @@
+# Godot
+.godot/
+*.import
+
+# Claude (internal)
+.claude/
+
+# Export
+export/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+*.o
+*.exe
