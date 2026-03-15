@@ -37,7 +37,7 @@ var camera: Camera3D
 var player_velocity := Vector3.ZERO
 var move_speed := 5.0
 var sprint_speed := 8.0
-var jump_force := 5.0
+var jump_force := 9.0
 var mouse_sensitivity := 0.002
 var gravity := 15.0
 var is_grounded := false
@@ -56,6 +56,11 @@ var raycast: RayCast3D
 # Hotbar
 var hotbar_slots: Array = []
 var selected_slot := 0
+var hotbar_slot_nodes: Array = []
+
+# Block preview
+var block_preview: MeshInstance3D
+var current_target_block := Vector3i(-1, -1, -1)
 
 # UI elements
 var hotbar: HBoxContainer
@@ -77,8 +82,16 @@ func _ready() -> void:
 	camera = $World/Player/Camera3D
 	raycast = RayCast3D.new()
 	raycast.enabled = true
-	raycast.target_position = Vector3(0, 0, -5)
-	player.add_child(raycast)
+	raycast.target_position = Vector3(0, 0, -6)
+	# Set collision mask to only collide with terrain (layer 1), not player
+	raycast.collision_mask = 1
+	# Exclude player from raycast
+	raycast.add_exception(player)
+	# Add raycast to camera so it points where player is looking
+	camera.add_child(raycast)
+
+	# Setup block preview
+	setup_block_preview()
 
 	# Setup collision shape
 	var collision = player.get_node("CollisionShape3D")
@@ -96,6 +109,11 @@ func _ready() -> void:
 	# Generate chunks around player position
 	update_chunks()
 
+	# Wait for physics frame to ensure collisions are ready
+	await get_tree().physics_frame
+	# Force raycast update to ensure it can detect terrain
+	raycast.force_raycast_update()
+
 	# Capture mouse
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
@@ -106,6 +124,45 @@ func setup_player() -> void:
 	var ground_height = get_height_at(int(start_x), int(start_z))
 	var start_y = ground_height + 10.0  # Spawn high above to fall down
 	player.global_position = Vector3(start_x, start_y, start_z)
+
+func setup_block_preview() -> void:
+	# Create a wireframe cube for block preview
+	block_preview = MeshInstance3D.new()
+
+	# Create box mesh
+	var box_mesh = BoxMesh.new()
+	box_mesh.size = Vector3(1.02, 1.02, 1.02)  # Slightly larger than block
+	block_preview.mesh = box_mesh
+
+	# Create outline material
+	var material = StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = Color(1, 1, 1, 0.3)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	block_preview.material_override = material
+
+	# Add to world (not player, so it stays fixed in world space)
+	$World.add_child(block_preview)
+	block_preview.visible = false
+
+func update_block_preview() -> void:
+	raycast.force_raycast_update()
+
+	if raycast.is_colliding():
+		var hit_pos = raycast.get_collision_point()
+		var normal = raycast.get_collision_normal()
+
+		# Get the block position
+		var block_pos = (hit_pos - normal * 0.5).floor()
+
+		# Update preview position
+		block_preview.global_position = Vector3(block_pos.x + 0.5, block_pos.y + 0.5, block_pos.z + 0.5)
+		block_preview.visible = true
+		current_target_block = Vector3i(block_pos.x, block_pos.y, block_pos.z)
+	else:
+		block_preview.visible = false
+		current_target_block = Vector3i(-1, -1, -1)
 
 func setup_ui() -> void:
 	hotbar = $CanvasLayer/Hotbar
@@ -144,25 +201,19 @@ func setup_ui() -> void:
 		style.set_content_margin_all(0)
 		slot.add_theme_stylebox_override("normal", style)
 
-		var style_hover = StyleBoxFlat.new()
-		style_hover.bg_color = Color(0, 0, 0, 0)
-		style_hover.border_width_left = 3
-		style_hover.border_width_top = 3
-		style_hover.border_width_right = 3
-		style_hover.border_width_bottom = 3
-		style_hover.border_color = Color.WHITE
-		slot.add_theme_stylebox_override("hover", style_hover)
-
 		hotbar.add_child(slot)
+		hotbar_slot_nodes.append(slot)
 
 	update_hotbar_selection()
 
 func update_hotbar_selection() -> void:
-	for i in range(hotbar.get_child_count()):
-		var slot = hotbar.get_child(i)
+	for i in range(hotbar_slot_nodes.size()):
+		var slot = hotbar_slot_nodes[i]
 		if i == selected_slot:
+			# Selected slot: larger size and white border
+			slot.custom_minimum_size = Vector2(48, 48)
 			var style = StyleBoxFlat.new()
-			style.bg_color = Color(0, 0, 0, 0)
+			style.bg_color = Color(0, 0, 0, 0.3)
 			style.border_width_left = 3
 			style.border_width_top = 3
 			style.border_width_right = 3
@@ -170,6 +221,8 @@ func update_hotbar_selection() -> void:
 			style.border_color = Color.WHITE
 			slot.add_theme_stylebox_override("normal", style)
 		else:
+			# Non-selected slot: normal size, no border
+			slot.custom_minimum_size = Vector2(40, 40)
 			var style = StyleBoxFlat.new()
 			style.bg_color = Color(0, 0, 0, 0)
 			style.border_width_left = 0
@@ -269,6 +322,9 @@ func _physics_process(delta: float) -> void:
 	# Update chunks around player
 	update_chunks()
 
+	# Update block preview
+	update_block_preview()
+
 func get_height_at(x: int, z: int) -> float:
 	var height = noise.get_noise_2d(x, z) * 20 + 20
 	return floor(height)
@@ -304,24 +360,24 @@ func generate_chunk(cx: int, cz: int) -> void:
 
 			for y in range(CHUNK_HEIGHT):
 				var block_y = y
-				var local_y = block_y
+				var world_y = block_y
 
 				if block_y < height:
 					if block_y == height:
 						# Top layer
 						if height < 25:
-							blocks[Vector3i(x, local_y, z)] = BlockType.GRASS
+							blocks[Vector3i(world_x, world_y, world_z)] = BlockType.GRASS
 						elif height < 35:
-							blocks[Vector3i(x, local_y, z)] = BlockType.GRASS
+							blocks[Vector3i(world_x, world_y, world_z)] = BlockType.GRASS
 						else:
-							blocks[Vector3i(x, local_y, z)] = BlockType.STONE
+							blocks[Vector3i(world_x, world_y, world_z)] = BlockType.STONE
 					elif block_y > height - 4:
-						blocks[Vector3i(x, local_y, z)] = BlockType.DIRT
+						blocks[Vector3i(world_x, world_y, world_z)] = BlockType.DIRT
 					else:
-						blocks[Vector3i(x, local_y, z)] = BlockType.STONE
+						blocks[Vector3i(world_x, world_y, world_z)] = BlockType.STONE
 				elif block_y < 20:
 					# Water level
-					blocks[Vector3i(x, local_y, z)] = BlockType.WATER
+					blocks[Vector3i(world_x, world_y, world_z)] = BlockType.WATER
 
 	chunks[key] = blocks
 	create_chunk_mesh(chunk_node, blocks, cx, cz)
@@ -380,16 +436,19 @@ func create_chunk_mesh(chunk_node: Node3D, blocks: Dictionary, cx: int, cz: int)
 		chunk_node.add_child(instance)
 		mesh_instances[get_chunk_key(cx, cz)] = instance
 
-		# Add collision using ConcavePolygonShape3D from the mesh
+		# Add collision using mesh.create_trimesh_shape()
 		if verts.size() > 0:
-			var static_body = StaticBody3D.new()
-			instance.add_child(static_body)
+			var body := StaticBody3D.new()
+			body.collision_layer = 1
+			body.collision_mask = 0
+			chunk_node.add_child(body)
 
-			var collision_shape = CollisionShape3D.new()
-			var concave_shape = ConcavePolygonShape3D.new()
-			concave_shape.set_faces(verts)
-			collision_shape.shape = concave_shape
-			static_body.add_child(collision_shape)
+			var shape := CollisionShape3D.new()
+			shape.shape = mesh.create_trimesh_shape()
+			body.add_child(shape)
+
+			# Debug output
+			print("Created collision shape with ", mesh.create_trimesh_shape().get_faces().size(), " faces")
 
 	# Create water mesh
 	var water_verts: PackedVector3Array = PackedVector3Array()
@@ -498,26 +557,45 @@ func add_face(verts: PackedVector3Array, cols: PackedColorArray, norms: PackedVe
 
 func break_block() -> void:
 	raycast.force_raycast_update()
+	print("Raycast colliding: ", raycast.is_colliding())
 	if raycast.is_colliding():
 		var hit_pos = raycast.get_collision_point()
 		var normal = raycast.get_collision_normal()
 
-		# Calculate block position
-		var block_pos = (hit_pos - normal * 0.5).floor()
-		var chunk_x = int(floor(block_pos.x / CHUNK_SIZE))
-		var chunk_z = int(floor(block_pos.z / CHUNK_SIZE))
+		# Calculate block position (the block being hit)
+		var block_pos = Vector3i(
+			int(floor(hit_pos.x - normal.x * 0.5)),
+			int(floor(hit_pos.y - normal.y * 0.5)),
+			int(floor(hit_pos.z - normal.z * 0.5))
+		)
+		var chunk_x = int(floor(float(block_pos.x) / CHUNK_SIZE))
+		var chunk_z = int(floor(float(block_pos.z) / CHUNK_SIZE))
 		var key = get_chunk_key(chunk_x, chunk_z)
 
+		print("block_pos: ", block_pos, " chunk_x: ", chunk_x, " chunk_z: ", chunk_z, " key: ", key)
 		if chunks.has(key):
-			var local_x = int(block_pos.x) - chunk_x * CHUNK_SIZE
-			var local_y = int(block_pos.y)
-			var local_z = int(block_pos.z) - chunk_z * CHUNK_SIZE
-			var block_key = Vector3i(local_x, local_y, local_z)
+			# Use world coordinates directly (blocks are stored in world coords)
+			var block_key = block_pos
 
+			# Debug: show what blocks exist near this position
+			var y_range = range(max(0, block_pos.y - 3), min(CHUNK_HEIGHT, block_pos.y + 4))
+			var nearby_blocks = []
+			for test_y in y_range:
+				var test_key = Vector3i(block_pos.x, test_y, block_pos.z)
+				if chunks[key].has(test_key):
+					nearby_blocks.append(test_key)
+			print("Nearby blocks at x=", block_pos.x, " z=", block_pos.z, ": ", nearby_blocks)
+
+			print("block_key: ", block_key, " exists: ", chunks[key].has(block_key))
 			if chunks[key].has(block_key):
 				chunks[key].erase(block_key)
 				# Regenerate chunk mesh
 				regenerate_chunk(chunk_x, chunk_z)
+				print("Block removed and chunk regenerated")
+			else:
+				print("Block not found at block_key!")
+		else:
+			print("Chunk not found for key: ", key)
 
 func place_block() -> void:
 	raycast.force_raycast_update()
@@ -526,16 +604,24 @@ func place_block() -> void:
 		var normal = raycast.get_collision_normal()
 
 		# Calculate block position (opposite direction of hit)
-		var block_pos = (hit_pos + normal * 0.5).floor()
-		var chunk_x = int(floor(block_pos.x / CHUNK_SIZE))
-		var chunk_z = int(floor(block_pos.z / CHUNK_SIZE))
+		# For top face (normal = UP), this gives position above the block
+		var block_pos = Vector3i(
+			int(floor(hit_pos.x + normal.x * 0.6)),
+			int(floor(hit_pos.y + normal.y * 0.6)),
+			int(floor(hit_pos.z + normal.z * 0.6))
+		)
+
+		var chunk_x = int(floor(float(block_pos.x) / CHUNK_SIZE))
+		var chunk_z = int(floor(float(block_pos.z) / CHUNK_SIZE))
 		var key = get_chunk_key(chunk_x, chunk_z)
 
+		# Ensure chunk exists
+		if not chunks.has(key):
+			generate_chunk(chunk_x, chunk_z)
+
 		if chunks.has(key):
-			var local_x = int(block_pos.x) - chunk_x * CHUNK_SIZE
-			var local_y = int(block_pos.y)
-			var local_z = int(block_pos.z) - chunk_z * CHUNK_SIZE
-			var block_key = Vector3i(local_x, local_y, local_z)
+			# Use world coordinates directly (blocks are stored in world coords)
+			var block_key = block_pos
 
 			# Don't place if block already exists
 			if not chunks[key].has(block_key):

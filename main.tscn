@@ -1,21 +1,21 @@
-[gd_scene load_steps=3 format=3 uid="uid://main_scene"]
+[gd_scene format=3 uid="uid://u4vojqtatgdh"]
 
-[ext_resource type="Script" path="res://main.gd" id="1_main"]
-[ext_resource type="Environment" path="res://environment.tres" id="2_env"]
+[ext_resource type="Script" uid="uid://cnmj8pjm4r76a" path="res://main.gd" id="1_main"]
+[ext_resource type="Environment" uid="uid://environment" path="res://environment.tres" id="2_env"]
 
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node3D" unique_id=1010158245]
 script = ExtResource("1_main")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=864706871]
 environment = ExtResource("2_env")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=50886756]
 transform = Transform3D(0.70710677, -0.5, 0.5, 0, 0.70710677, 0.70710677, -0.70710677, -0.5, 0.5, 0, 10, 0)
 shadow_enabled = true
 
-[node name="CanvasLayer" type="CanvasLayer" parent="."]
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1668178747]
 
-[node name="Crosshair" type="ColorRect" parent="CanvasLayer"]
+[node name="Crosshair" type="ColorRect" parent="CanvasLayer" unique_id=1726511275]
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
@@ -29,7 +29,7 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(1, 1, 1, 0.5)
 
-[node name="Hotbar" type="HBoxContainer" parent="CanvasLayer"]
+[node name="Hotbar" type="HBoxContainer" parent="CanvasLayer" unique_id=257938650]
 anchors_preset = 7
 anchor_left = 0.5
 anchor_top = 1.0
@@ -42,11 +42,11 @@ offset_bottom = -20.0
 grow_horizontal = 2
 grow_vertical = 0
 
-[node name="World" type="Node3D" parent="."]
+[node name="World" type="Node3D" parent="." unique_id=170511960]
 
-[node name="Player" type="CharacterBody3D" parent="World"]
+[node name="Player" type="CharacterBody3D" parent="World" unique_id=550325208]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="World/Player"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="World/Player" unique_id=1962665135]
 
-[node name="Camera3D" type="Camera3D" parent="World/Player"]
+[node name="Camera3D" type="Camera3D" parent="World/Player" unique_id=775747723]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
